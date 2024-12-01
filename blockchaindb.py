@@ -11,6 +11,8 @@ import queue
 from datetime import datetime
 from io import BytesIO
 from simpledb import SimpleDB
+from simpledb import BinLog
+
 
 
 class Node:
@@ -81,7 +83,22 @@ class Node:
     def process_binlog(self, binlog_data: bytes):
         """处理接收到的 binlog 数据"""
         print(f"节点 {self.node_id} 正在处理 binlog 数据: {binlog_data.hex()}")
-        # 此处可添加具体的区块链更新逻辑
+
+        try:
+            # 解析 binlog 数据并更新数据库
+            binlog = BinLog.from_bytes(binlog_data)
+            for op in binlog.operations:
+                table_name = op['table']
+                if table_name not in self.db.get_tables():
+                    print(f"节点 {self.node_id} 检测到表 {table_name} 不存在，正在创建...")
+                    self.db.create_table(table_name)
+
+            self.db.apply_binlog(binlog_data)  # 应用 binlog 数据
+            print(f"节点 {self.node_id} 应用 binlog 数据成功，当前数据库状态:")
+            self.db.print_database_state()
+
+        except Exception as e:
+            print(f"节点 {self.node_id} 解析 binlog 时出错: {e}")
 
 
 @dataclass
@@ -89,8 +106,6 @@ class Block:
     """区块结构"""
     previous_hash: bytes      # 32 bytes
     timestamp: float         # 8 bytes
-
-    # todo 发送binlog给其他的Block
     binlog_data: bytes      # binlog数据
     hash: Optional[bytes] = None
 
@@ -324,7 +339,12 @@ class Blockchain:
 
 
 def test_multiple_nodes():
-    """测试多节点同步"""
+    """测试多节点区块链同步"""
+
+    # 创建区块链
+    print("=== 创建区块链 ===")
+    blockchain = Blockchain()
+
     # 创建节点 A
     node_a = Node('A', '127.0.0.1', 5000)
     node_a.start_server()
@@ -337,15 +357,46 @@ def test_multiple_nodes():
     node_c = Node('C', '127.0.0.1', 5002)
     node_c.start_server()
 
+    # 初始化每个节点的数据库
+    print("\n=== 初始化每个节点的数据库 ===")
+    for node in [node_a, node_b, node_c]:
+        db = SimpleDB()
+        db.create_table('users')  # 创建 `users` 表
+        print(f"\n=== 数据库当前状态 ===")
+        db.print_database_state()
+        node.db = db
+
     # 节点 A 连接到 B 和 C
     node_a.connect_to_peer('B', '127.0.0.1', 5001)
     node_a.connect_to_peer('C', '127.0.0.1', 5002)
 
-    # 模拟 binlog 数据
-    binlog_data = b'Test binlog data'
-    threading.Timer(1, lambda: node_a.send_binlog_to_peer('B', binlog_data)).start()
-    threading.Timer(2, lambda: node_a.send_binlog_to_peer('C', binlog_data)).start()
+    # 模拟生成区块
+    print("\n=== 模拟区块生成 ===")
 
+    # 第一个区块的操作
+    db1 = SimpleDB()
+    db1.create_table('users')
+    db1.insert('users', {'id': 1, 'name': 'Alice', 'age': 25})
+    db1.insert('users', {'id': 2, 'name': 'Bob', 'age': 30})
+    binlog1 = db1.create_binlog()
+    blockchain.add_binlog(binlog1)
+    block1 = blockchain.create_block()
+
+    # 广播第一个区块的 binlog
+    stop_event = threading.Event()
+
+    def send_binlog_and_stop():
+        node_a.send_binlog_to_peer('B', block1.binlog_data)
+        node_a.send_binlog_to_peer('C', block1.binlog_data)
+        time.sleep(1)  # 确保接收完成
+        stop_event.set()
+
+    t1 = threading.Thread(target=send_binlog_and_stop)
+    t1.start()
+
+    # 等待测试完成
+    stop_event.wait()
+    print("\n=== 测试结束 ===")
 
 if __name__ == "__main__":
     test_multiple_nodes()

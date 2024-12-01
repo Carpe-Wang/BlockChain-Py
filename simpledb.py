@@ -256,6 +256,10 @@ class SimpleDB:
             for record in records:
                 print(f"  {record}")
 
+    def get_tables(self) -> List[str]:
+        """返回当前数据库中的所有表名"""
+        return list(self.tables.keys())
+
 def test_simple_db():
     """测试SimpleDB的功能，包括binlog的序列化和反序列化"""
     # 创建原始数据库并执行操作
