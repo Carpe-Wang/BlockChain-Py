@@ -362,7 +362,6 @@ def test_multiple_nodes():
     for node in [node_a, node_b, node_c]:
         db = SimpleDB()
         db.create_table('users')  # 创建 `users` 表
-        print(f"\n=== 数据库当前状态 ===")
         db.print_database_state()
         node.db = db
 
